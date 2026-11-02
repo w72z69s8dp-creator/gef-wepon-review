@@ -1,0 +1,56 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>武器照合</title>
+<style>body{font:16px -apple-system,sans-serif;margin:0;background:#f2f5f9;color:#172335}header{position:sticky;top:0;background:white;padding:12px;z-index:3;border-bottom:1px solid #ddd}main{max-width:900px;margin:auto;padding:12px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:12px}.card{background:white;padding:12px;border-radius:12px}.card img{width:100%;height:180px;object-fit:contain}button,select,input{font:inherit;min-height:44px}select,input[type=text]{width:100%;box-sizing:border-box}.choices{display:flex;flex-wrap:wrap;gap:5px}.choices button{border:1px solid #aab5c3;background:white;border-radius:8px;min-width:43px}.choices button.on{background:#2458b8;color:white}.actions{display:flex;gap:8px;margin:12px 0}.actions button{flex:1}small{color:#556}label{display:block;margin-top:10px}#import{background:#fff;padding:16px;border-radius:12px}</style>
+<header><strong>武器照合</strong> <span id="status"></span><div class="actions"><button id="prev">前へ</button><span id="page"></span><button id="next">次へ</button><button id="csv">CSV</button></div></header><main><div id="import"><b>初回のみ：元の武器照合HTMLを選択</b><p>以前の119件画像入りHTMLを読み込みます。画像や武器名辞書は外部送信しません。</p><input type="file" id="file" accept=".html,text/html"><small id="notice"></small></div><div id="cards" class="cards"></div></main>
+<script>
+let items=[],dict=[],page=0;const per=10,$=id=>document.getElementById(id);
+const attrs=['火','水','土','風','光','闇'],kinds=['剣','短剣','槍','斧','杖','銃','格闘','弓','楽器','刀'];
+let saved={};try{saved=JSON.parse(localStorage.getItem('weapon-review-v2')||'{}')}catch(e){}
+function persist(){try{localStorage.setItem('weapon-review-v2',JSON.stringify(saved))}catch(e){$('notice').textContent='保存容量制限の可能性があります。CSVを保存してください。'}}
+function extract(text){
+ const doc=new DOMParser().parseFromString(text,'text/html');
+ const arts=[...doc.querySelectorAll('article.weapon')];
+ if(arts.length){
+ items=arts.map((a,i)=>({id:a.dataset.id||String(i+1),row:a.querySelector('small')?.textContent||'',image:a.querySelector('img')?.getAttribute('src')||''}));
+ }else{
+ const match=text.match(/const cards\s*=\s*(\[[\s\S]*?\]);\s*const catalog=/);
+ if(match)items=JSON.parse(match[1]);
+ }
+ const scripts=[...doc.querySelectorAll('script')].map(x=>x.textContent).join('\n');
+ const m=scripts.match(/const (?:catalog|dict)\s*=\s*(\{|\[)[\s\S]*?(?=;\s*(?:const|let|function|document|items|cards))/);
+ if(m){const v=JSON.parse(m[0].split('=').slice(1).join('=').trim().replace(/;\s*$/,''));dict=Array.isArray(v)?v:Object.entries(v).flatMap(([key,names])=>names.map(name=>({attribute:key.split('|')[0],type:key.split('|')[1],name})));}
+ if(!items.length||!dict.length)throw Error('画像または武器名辞書を読み取れません。119件の確認表を選んでください。');
+}
+function choice(box,values,value,onchange){
+ values.forEach(v=>{const b=document.createElement('button');b.textContent=v;b.className=v===value?'on':'';b.onclick=()=>onchange(v);box.append(b);});
+}
+function render(){
+ $('cards').replaceChildren();$('page').textContent=(page+1)+' / '+Math.max(1,Math.ceil(items.length/per));$('status').textContent='判定済 '+Object.values(saved).filter(x=>x.decision).length+'/'+items.length;
+ $('prev').disabled=page===0;$('next').disabled=(page+1)*per>=items.length;
+ for(const item of items.slice(page*per,(page+1)*per)){
+ const r=saved[item.id]||(saved[item.id]={attribute:'光',kind:'',name:'',decision:''});
+ const card=document.createElement('section');card.className='card';
+ const img=document.createElement('img');img.src=item.image;img.loading='lazy';card.append(img);
+ const title=document.createElement('div');title.textContent=item.id+' / '+item.row;card.append(title);
+ for(const [label,values,key] of [['① 属性',attrs,'attribute'],['② 武器種',kinds,'kind']]){
+ const h=document.createElement('label');h.textContent=label;card.append(h);
+ const box=document.createElement('div');box.className='choices';card.append(box);
+ choice(box,values,r[key],v=>{r[key]=v;r.name='';persist();render()});
+ }
+ const h=document.createElement('label');h.textContent='③ 武器名';card.append(h);
+ const select=document.createElement('select');const names=r.kind?dict.filter(x=>x.attribute===r.attribute&&x.type===r.kind).map(x=>x.name):[];
+ select.add(new Option(r.kind?'候補 '+names.length+'件':'武器種を選択',''));
+ for(const name of names)select.add(new Option(name,name));
+ if(names.includes(r.name))select.value=r.name;
+ select.onchange=()=>{r.name=select.value;input.value=r.name;persist()};card.append(select);
+ const input=document.createElement('input');input.type='text';input.placeholder='候補にない場合は直接入力';input.value=r.name;input.oninput=()=>{r.name=input.value;persist()};card.append(input);
+ const group=document.createElement('div');group.className='choices';group.style.marginTop='10px';
+ for(const v of ['一致','不一致','保留']){const b=document.createElement('button');b.textContent=v;b.className=r.decision===v?'on':'';b.onclick=()=>{r.decision=v;persist();render()};group.append(b)}
+ card.append(group);$('cards').append(card);
+ }
+}
+$('file').onchange=async e=>{try{const text=await e.target.files[0].text();extract(text);$('import').hidden=true;render()}catch(err){$('notice').textContent=err.message}};
+$('prev').onclick=()=>{page=Math.max(0,page-1);render();scrollTo(0,0)};
+$('next').onclick=()=>{page++;render();scrollTo(0,0)};
+$('csv').onclick=()=>{const rows=[['ID','属性','武器種','武器名','判定'],...items.map(x=>{const r=saved[x.id]||{};return[x.id,r.attribute||'',r.kind||'',r.name||'',r.decision||'']})];const data='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'text/csv;charset=utf-8'}));a.download='武器照合.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+render();
+</script></html>
